@@ -6,6 +6,7 @@ import (
 
 func init() {
 	Provision.AddCommand(ProvisionAWS)
+	Provision.AddCommand(ProvisionGCP)
 }
 
 var Provision = &cobra.Command{
