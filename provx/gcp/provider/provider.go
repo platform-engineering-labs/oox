@@ -385,6 +385,19 @@ func (c *Client) DeleteOIDCProvider(ctx context.Context, pool PoolSpec, provider
 	return nil
 }
 
+// GetOIDCProvider returns the provider if it exists, or nil if it does not.
+//
+// Exported because a caller that shares one provider across several tenants
+// has to decide whether the object it found is actually its own before
+// EnsureOIDCProvider patches it: the Ensure call converges whatever it finds at
+// that name, which on a name collision would rewrite somebody else's trust.
+func (c *Client) GetOIDCProvider(ctx context.Context, pool PoolSpec, providerID string) (*iam.WorkloadIdentityPoolProvider, error) {
+	if err := pool.validate(); err != nil {
+		return nil, err
+	}
+	return c.getProvider(ctx, fmt.Sprintf("%s/providers/%s", pool.Name(), providerID))
+}
+
 func (c *Client) getProvider(ctx context.Context, name string) (*iam.WorkloadIdentityPoolProvider, error) {
 	p, err := c.iam.Projects.Locations.WorkloadIdentityPools.Providers.Get(name).Context(ctx).Do()
 	if err != nil {
@@ -423,8 +436,14 @@ func providerDrifted(got *iam.WorkloadIdentityPoolProvider, want OIDCProviderSpe
 	if got.Oidc.IssuerUri != want.IssuerURI {
 		return true
 	}
-	// The server materializes the default audience when none is requested, so
-	// only compare when the caller pinned an explicit list.
+	// Only compare when the caller pinned an explicit list. Observed against
+	// the live API: a provider created without allowedAudiences comes back
+	// with the field absent, not with a materialized default, so an empty
+	// "want" cannot be compared against anything meaningful. Note the
+	// consequence for a caller that starts pinning the field on a provider
+	// that did not have it: that is a real narrowing, from GCP's implicit
+	// default (which also accepts the https:// spelling of the resource name)
+	// to exactly the listed audiences.
 	if len(want.AllowedAudiences) > 0 &&
 		!reflect.DeepEqual(got.Oidc.AllowedAudiences, want.AllowedAudiences) {
 		return true

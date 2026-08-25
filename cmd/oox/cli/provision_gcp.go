@@ -45,19 +45,20 @@ var ProvisionGCPCreate = &cobra.Command{
 			return fmt.Errorf("must provide installation id")
 		}
 
-		prov, err := gcp.New(slog.New(Logger), project, tenantId, installationId)
-		if err != nil {
-			return err
-		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		err = prov.Create(ctx)
+		prov, err := gcp.New(ctx, slog.New(Logger), project, tenantId, installationId)
 		if err != nil {
 			return err
 		}
 
+		res, err := prov.Create(ctx)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(res.ProviderName)
 		return nil
 	},
 }
@@ -83,13 +84,13 @@ var ProvisionGCPDelete = &cobra.Command{
 			return fmt.Errorf("must provide installation id")
 		}
 
-		prov, err := gcp.New(slog.New(Logger), project, tenantId, installationId)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		prov, err := gcp.New(ctx, slog.New(Logger), project, tenantId, installationId)
 		if err != nil {
 			return err
 		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
 
 		err = prov.Delete(ctx)
 		if err != nil {
