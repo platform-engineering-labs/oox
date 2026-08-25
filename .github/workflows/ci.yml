@@ -17,6 +17,12 @@ jobs:
             # auto-upgrades, proving the floor actually compiles.
             go-version: "1.26.0"
             gotoolchain: "local"
+          - dir: "gcpname"
+            # Same reason as provx, and it matters more here: this module
+            # exists partly so consumers pinning an older Go can take it, and
+            # the only thing that proves the floor is building at the floor.
+            go-version: "1.26.0"
+            gotoolchain: "local"
           - dir: "cmd/oox"
     env:
       GOTOOLCHAIN: ${{ matrix.gotoolchain || 'auto' }}
