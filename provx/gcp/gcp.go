@@ -50,16 +50,29 @@ type GCP struct {
 	project        string
 	tenantId       string
 	installationId string
+	issuer         provx.Issuer
 }
 
 // New builds a provisioner for one installation's connection to one project.
+//
+// issuer is the outbound identity issuer the provider will trust, taken from
+// the caller and validated here rather than compiled in. The AWS provisioner
+// has always worked this way, and the reason is the same on both clouds: the
+// issuer is produced by the control plane and travels verbatim into the trust
+// artifacts, so a build that substituted its own would provision trust for an
+// issuer the caller never named.
 //
 // The context is the caller's: it bounds the client construction, and the
 // credential lookup that construction performs. opts are passed through to the
 // underlying Google clients, which is how tests reach a fake without a network
 // or a credential.
-func New(ctx context.Context, logger *slog.Logger, project, tenantId, installationId string,
+func New(ctx context.Context, logger *slog.Logger, project, tenantId, installationId, issuer string,
 	opts ...option.ClientOption) (*GCP, error) {
+	iss, err := provx.ParseIssuer(issuer)
+	if err != nil {
+		return nil, err
+	}
+
 	client, err := provider.NewClient(ctx, opts...)
 	if err != nil {
 		return nil, err
@@ -71,6 +84,7 @@ func New(ctx context.Context, logger *slog.Logger, project, tenantId, installati
 		project:        project,
 		tenantId:       tenantId,
 		installationId: installationId,
+		issuer:         iss,
 	}, nil
 }
 
@@ -181,12 +195,12 @@ func (gcp *GCP) assertProviderIsOurs(ctx context.Context, pool provider.PoolSpec
 	if existing == nil || existing.Oidc == nil {
 		return nil // nothing there yet, or nothing to disagree with
 	}
-	if existing.Oidc.IssuerUri == issuerURI() {
+	if existing.Oidc.IssuerUri == gcp.issuer.URL() {
 		return nil
 	}
 	return &ProviderNotOursError{
 		Name:          existing.Name,
-		IssuerWanted:  issuerURI(),
+		IssuerWanted:  gcp.issuer.URL(),
 		IssuerFound:   existing.Oidc.IssuerUri,
 		PoolID:        poolID,
 		ProviderID:    providerID,
@@ -207,7 +221,7 @@ func (gcp *GCP) spec(projectNumber string) (*provider.PoolSpec, *provider.OIDCPr
 	oidcProvider := &provider.OIDCProviderSpec{
 		ProviderID:  providerID,
 		DisplayName: "formae ai Cloud OIDC",
-		IssuerURI:   issuerURI(),
+		IssuerURI:   gcp.issuer.URL(),
 		AttributeMapping: map[string]string{
 			"google.subject": "assertion.sub",
 		},
@@ -221,8 +235,6 @@ func (gcp *GCP) spec(projectNumber string) (*provider.PoolSpec, *provider.OIDCPr
 
 	return pool, oidcProvider
 }
-
-func issuerURI() string { return fmt.Sprintf("https://%s", provx.Endpoint) }
 
 // subjectNamespaceCondition is the CEL expression Google evaluates against an
 // incoming assertion. It admits every subject this issuer mints and nothing

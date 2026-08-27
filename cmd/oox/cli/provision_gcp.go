@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/platform-engineering-labs/oox/provx"
 	"github.com/platform-engineering-labs/oox/provx/gcp"
 	"github.com/spf13/cobra"
 )
@@ -48,7 +49,7 @@ var ProvisionGCPCreate = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		prov, err := gcp.New(ctx, slog.New(Logger), project, tenantId, installationId)
+		prov, err := gcp.New(ctx, slog.New(Logger), project, tenantId, installationId, "https://"+provx.Endpoint)
 		if err != nil {
 			return err
 		}
@@ -87,7 +88,7 @@ var ProvisionGCPDelete = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		prov, err := gcp.New(ctx, slog.New(Logger), project, tenantId, installationId)
+		prov, err := gcp.New(ctx, slog.New(Logger), project, tenantId, installationId, "https://"+provx.Endpoint)
 		if err != nil {
 			return err
 		}

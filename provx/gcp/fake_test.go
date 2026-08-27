@@ -238,18 +238,30 @@ func errorResponse(e *googleError) (*http.Response, error) {
 	return jsonResponse(e.status, payload)
 }
 
+// testIssuer is the issuer the fake-backed provisioners trust. It is not the
+// production one on purpose: an issuer compiled in rather than taken from the
+// caller would pass every test that used the production value.
+const testIssuer = "https://issuer.test.example"
+
 // newTestGCP builds a GCP provisioner wired to the fake.
 func newTestGCP(t *testing.T, f *fakeGoogle, tenant, installation string) *GCP {
 	t.Helper()
-	g, err := New(t.Context(), discardLogger(), "test-project", tenant, installation,
-		option.WithoutAuthentication(),
-		option.WithEndpoint("https://example.invalid/"),
-		option.WithHTTPClient(&http.Client{Transport: f}),
-	)
+	g, err := newTestGCPWithIssuer(t, f, tenant, installation, testIssuer)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	return g
+}
+
+// newTestGCPWithIssuer is newTestGCP with the issuer left to the caller and
+// the construction error returned, for the cases that are about the issuer.
+func newTestGCPWithIssuer(t *testing.T, f *fakeGoogle, tenant, installation, issuer string) (*GCP, error) {
+	t.Helper()
+	return New(t.Context(), discardLogger(), "test-project", tenant, installation, issuer,
+		option.WithoutAuthentication(),
+		option.WithEndpoint("https://example.invalid/"),
+		option.WithHTTPClient(&http.Client{Transport: f}),
+	)
 }
 
 func mustCreate(t *testing.T, g *GCP) *Result {

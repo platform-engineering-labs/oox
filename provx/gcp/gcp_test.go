@@ -200,6 +200,37 @@ func TestCreateReturnsTheProviderName(t *testing.T) {
 	}
 }
 
+// TestProviderTrustsTheIssuerItWasGiven holds the issuer to the caller's. It
+// is the whole reason New takes one: an issuer resolved inside this package
+// would provision trust for whatever this build was compiled against, no
+// matter which issuer the control plane named.
+func TestProviderTrustsTheIssuerItWasGiven(t *testing.T) {
+	f := newFakeGoogle()
+	mustCreate(t, newTestGCP(t, f, "tenant-a", "install-1"))
+
+	for _, p := range f.createdProviders {
+		if p.Oidc.IssuerUri != testIssuer {
+			t.Errorf("provider issuerUri = %q, want %q", p.Oidc.IssuerUri, testIssuer)
+		}
+	}
+	if len(f.createdProviders) == 0 {
+		t.Fatal("no provider was created")
+	}
+}
+
+// TestRefusesAnIssuerThatIsNotACanonicalOrigin fails the construction rather
+// than the provisioning: an issuer with a path or a port cannot be compared
+// against what Google stores, so accepting one here would defer the failure to
+// a provider that silently never matches.
+func TestRefusesAnIssuerThatIsNotACanonicalOrigin(t *testing.T) {
+	f := newFakeGoogle()
+	for _, issuer := range []string{"", "http://issuer.test.example", "https://issuer.test.example/", "https://issuer.test.example:8443"} {
+		if _, err := newTestGCPWithIssuer(t, f, "tenant-a", "install-1", issuer); err == nil {
+			t.Errorf("New accepted issuer %q", issuer)
+		}
+	}
+}
+
 // TestRefusesAProviderThatIsNotOurs guards the shared singleton: the pool and
 // provider ids are fixed, so an object of that name belonging to a different
 // deployment must not be adopted and rewritten.
