@@ -33,7 +33,7 @@ func TestEnsureProviderCreates(t *testing.T) {
 	if err != nil || out != ProviderCreated {
 		t.Fatalf("out=%v err=%v", out, err)
 	}
-	if gotURL != "https://oidc.cloud.formae.ai" || len(gotClients) != 1 || gotClients[0] != "sts.amazonaws.com" {
+	if gotURL != "https://issuer.test.example" || len(gotClients) != 1 || gotClients[0] != "sts.amazonaws.com" {
 		t.Fatalf("create input: url=%q clients=%v", gotURL, gotClients)
 	}
 }
@@ -45,7 +45,7 @@ func TestEnsureProviderExistsValid(t *testing.T) {
 		},
 		getOIDCProvider: func(in *iam.GetOpenIDConnectProviderInput) (*iam.GetOpenIDConnectProviderOutput, error) {
 			return &iam.GetOpenIDConnectProviderOutput{
-				Url:          awssdk.String("oidc.cloud.formae.ai"),
+				Url:          awssdk.String("issuer.test.example"),
 				ClientIDList: []string{"sts.amazonaws.com"},
 			}, nil
 		},
@@ -64,7 +64,7 @@ func TestEnsureProviderAddsClientID(t *testing.T) {
 			return nil, &types.EntityAlreadyExistsException{}
 		},
 		getOIDCProvider: func(*iam.GetOpenIDConnectProviderInput) (*iam.GetOpenIDConnectProviderOutput, error) {
-			return &iam.GetOpenIDConnectProviderOutput{Url: awssdk.String("oidc.cloud.formae.ai"), ClientIDList: []string{"other"}}, nil
+			return &iam.GetOpenIDConnectProviderOutput{Url: awssdk.String("issuer.test.example"), ClientIDList: []string{"other"}}, nil
 		},
 		addClientID: func(in *iam.AddClientIDToOpenIDConnectProviderInput) (*iam.AddClientIDToOpenIDConnectProviderOutput, error) {
 			if awssdk.ToString(in.ClientID) != "sts.amazonaws.com" {

@@ -21,7 +21,12 @@ func (f *fakeSTS) GetCallerIdentity(ctx context.Context, in *sts.GetCallerIdenti
 	return &sts.GetCallerIdentityOutput{Account: &f.account, Arn: &f.arn}, nil
 }
 
-const testIssuer = "https://oidc.cloud.formae.ai"
+// testIssuer is deliberately not the production issuer. The production code
+// takes the issuer as a parameter, and the assertions below pin it as it
+// appears in the provider URL and the trust policy — but written with the
+// production value they would pass just as well against an issuer resolved
+// from provx.Endpoint, which is the regression they exist to catch.
+const testIssuer = "https://issuer.test.example"
 
 func TestNewVerifiesAccount(t *testing.T) {
 	_, err := newWithClients(context.Background(),

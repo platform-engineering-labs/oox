@@ -52,7 +52,7 @@ func TestCreateRerunConverges(t *testing.T) {
 		},
 		getOIDCProvider: func(*iam.GetOpenIDConnectProviderInput) (*iam.GetOpenIDConnectProviderOutput, error) {
 			return &iam.GetOpenIDConnectProviderOutput{
-				Url:          awssdk.String("oidc.cloud.formae.ai"),
+				Url:          awssdk.String("issuer.test.example"),
 				ClientIDList: []string{"sts.amazonaws.com"},
 			}, nil
 		},

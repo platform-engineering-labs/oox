@@ -17,7 +17,7 @@ import (
 // policy by unmarshal-and-compare, not byte equality.
 func assertSemanticTrustDoc(t *testing.T, doc string) {
 	t.Helper()
-	want := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::111122223333:oidc-provider/oidc.cloud.formae.ai"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"oidc.cloud.formae.ai:aud":"sts.amazonaws.com","oidc.cloud.formae.ai:sub":"fai:t/i"}}}]}`
+	want := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"arn:aws:iam::111122223333:oidc-provider/issuer.test.example"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"issuer.test.example:aud":"sts.amazonaws.com","issuer.test.example:sub":"fai:t/i"}}}]}`
 	var gotV, wantV any
 	if err := json.Unmarshal([]byte(doc), &gotV); err != nil {
 		t.Fatalf("trust policy does not parse: %v\n%s", err, doc)
