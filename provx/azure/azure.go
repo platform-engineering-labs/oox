@@ -1,10 +1,12 @@
 package azure
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -60,6 +62,12 @@ type Azure struct {
 	federatedCreds  federatedIdentityCredentialsAPI
 	roleAssignments roleAssignmentsAPI
 	subscriptions   subscriptionsAPI
+
+	// now and sleep are the clock the service-principal-propagation retry
+	// loop reads, so tests can drive it through a full timeout without
+	// actually waiting on one.
+	now   func() time.Time
+	sleep func(context.Context, time.Duration) error
 }
 
 // New builds an Azure provisioner backed by the ambient credential (env
@@ -144,6 +152,19 @@ func newWithClients(logger *slog.Logger, subscriptionID, azTenantID, formaeTenan
 		federatedCreds:  fed,
 		roleAssignments: roles,
 		subscriptions:   subs,
+		now:             time.Now,
+		sleep:           sleepContext,
+	}
+}
+
+// sleepContext is the real clock's sleep: it waits out d, or returns early
+// with ctx's error if ctx is cancelled first.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
 	}
 }
 

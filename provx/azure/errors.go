@@ -1,6 +1,11 @@
 package azure
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+)
 
 // LocationMismatchError: a resource group of the requested name already
 // exists in a different location. A resource group's location is immutable,
@@ -29,4 +34,115 @@ type IdentityNotOursError struct {
 func (e *IdentityNotOursError) Error() string {
 	return fmt.Sprintf("managed identity carries a federated credential %q we do not recognize (%s); remove it before formae can adopt this identity",
 		e.Name, e.Reason)
+}
+
+// RoleAssignmentForbiddenError: the caller cannot create role assignments at
+// Scope. This is the normal-day failure for a subscription Contributor,
+// whose notActions exclude Microsoft.Authorization/*/Write - Contributor is
+// not enough, on purpose, to grant itself more.
+type RoleAssignmentForbiddenError struct {
+	Scope string
+	Cause error
+}
+
+func (e *RoleAssignmentForbiddenError) Error() string {
+	return fmt.Sprintf("cannot create role assignments at %s; this requires the Owner or User Access Administrator role", e.Scope)
+}
+
+func (e *RoleAssignmentForbiddenError) Unwrap() error { return e.Cause }
+
+// ProviderNotRegisteredError: the subscription has never registered the
+// resource provider a call depends on. Common on a fresh subscription.
+// formae never registers a provider on the caller's behalf: that is a
+// mutation nobody asked for.
+type ProviderNotRegisteredError struct {
+	Provider string
+	Cause    error
+}
+
+func (e *ProviderNotRegisteredError) Error() string {
+	return fmt.Sprintf("the %s resource provider is not registered on this subscription; register it and re-run", e.Provider)
+}
+
+func (e *ProviderNotRegisteredError) Unwrap() error { return e.Cause }
+
+// PermissionDeniedError: the credentials reached ARM and were refused, on a
+// call that is not a role assignment. Kept distinct from
+// RoleAssignmentForbiddenError because both arrive as the same ARM error
+// code (AuthorizationFailed) and the remedies are unrelated: one needs
+// Owner/User Access Administrator specifically, the other needs whatever
+// permission the failed action requires.
+type PermissionDeniedError struct {
+	Action, Scope string
+	Cause         error
+}
+
+func (e *PermissionDeniedError) Error() string {
+	if e.Action == "" && e.Scope == "" {
+		return fmt.Sprintf("permission denied: %v", e.Cause)
+	}
+	return fmt.Sprintf("permission denied performing %s at %s", e.Action, e.Scope)
+}
+
+func (e *PermissionDeniedError) Unwrap() error { return e.Cause }
+
+// Operation names the ARM call Classify is interpreting. The same error code
+// means different things on different calls - most importantly,
+// AuthorizationFailed means "you cannot assign roles" on a role assignment
+// and "you cannot do this at all" on everything else - so Classify needs to
+// know which call failed, not just how.
+type Operation struct {
+	// Provider is the resource provider this call depends on, named in
+	// ProviderNotRegisteredError when the subscription has not registered it.
+	Provider string
+
+	// RoleAssignment is true only for the role assignment Create call, the
+	// one operation where AuthorizationFailed has a distinct, actionable
+	// meaning worth its own error type.
+	RoleAssignment bool
+
+	// Scope is the ARM scope a role assignment call was made at. Ignored
+	// for every other operation.
+	Scope string
+}
+
+// Classify maps an ARM failure onto one of the typed errors above, leaving
+// anything it does not recognise as a generic error that carries the HTTP
+// status and nothing else: the caller gets a status code to report, not a
+// false claim that the failure is one of the known shapes.
+func Classify(err error, op Operation) error {
+	if err == nil {
+		return nil
+	}
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) {
+		return err
+	}
+
+	switch respErr.ErrorCode {
+	case "MissingSubscriptionRegistration":
+		return &ProviderNotRegisteredError{Provider: op.Provider, Cause: err}
+
+	case "AuthorizationFailed":
+		if op.RoleAssignment {
+			return &RoleAssignmentForbiddenError{Scope: op.Scope, Cause: err}
+		}
+		return &PermissionDeniedError{Cause: err}
+
+	case "RoleAssignmentUpdateNotPermitted":
+		if op.RoleAssignment {
+			return &RoleAssignmentForbiddenError{Scope: op.Scope, Cause: err}
+		}
+
+	case "RoleAssignmentExists":
+		if op.RoleAssignment {
+			return nil
+		}
+	}
+
+	// Empty or unrecognised: a generic error carrying the status, and
+	// deliberately no cause - the raw ARM error is not exposed as something
+	// callers can errors.Is/errors.As their way back to, since nothing here
+	// classified it into a shape worth matching on.
+	return fmt.Errorf("azure request failed with status %d", respErr.StatusCode)
 }
