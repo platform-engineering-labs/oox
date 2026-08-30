@@ -117,8 +117,15 @@ func TestCredentialOptionsSeamKeepsTheExchangeOffline(t *testing.T) {
 		t.Fatalf("Token = %q, want the fake transport's canned token", tok.Token)
 	}
 
-	if client.gotAudience != Audience {
-		t.Fatalf("assertion callback audience = %q, want %q", client.gotAudience, Audience)
+	// The literal, not the Audience constant: provx/azure duplicates this
+	// exact string on its side of the module boundary and pins it the same
+	// way (see the golden test next to tokenAudience in
+	// provx/azure/identity_test.go), specifically so that editing this
+	// constant alone - without updating provx/azure - fails a test instead
+	// of shipping a silent mismatch that breaks federation in production.
+	const goldenAudience = "api://AzureADTokenExchange"
+	if client.gotAudience != goldenAudience {
+		t.Fatalf("assertion callback audience = %q, want the golden literal %q", client.gotAudience, goldenAudience)
 	}
 	if client.gotCtx == nil || client.gotCtx.Value(ctxKey{}) != "caller-value" {
 		t.Fatal("assertion callback did not receive the caller's context")
