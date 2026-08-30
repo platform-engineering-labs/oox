@@ -28,14 +28,14 @@ func (az *Azure) ensureResourceGroup(ctx context.Context) error {
 		return nil
 	}
 	if armStatusCode(err) != 404 {
-		return err
+		return Classify(err, opResourceGroup)
 	}
 
 	_, err = az.resourceGroups.CreateOrUpdate(ctx, az.resourceGroup, armresources.ResourceGroup{
 		Location: to.Ptr(az.location),
 		Tags:     map[string]*string{ownerTagKey: to.Ptr(ownerTagValue)},
 	}, nil)
-	return err
+	return Classify(err, opResourceGroup)
 }
 
 // ensureIdentity converges the target managed identity: create it, tagged as
@@ -48,7 +48,7 @@ func (az *Azure) ensureIdentity(ctx context.Context) (armmsi.Identity, error) {
 		return existing.Identity, nil
 	}
 	if armStatusCode(err) != 404 {
-		return armmsi.Identity{}, err
+		return armmsi.Identity{}, Classify(err, opManagedIdentity)
 	}
 
 	created, err := az.identities.CreateOrUpdate(ctx, az.resourceGroup, az.identityName(), armmsi.Identity{
@@ -56,7 +56,7 @@ func (az *Azure) ensureIdentity(ctx context.Context) (armmsi.Identity, error) {
 		Tags:     map[string]*string{ownerTagKey: to.Ptr(ownerTagValue)},
 	}, nil)
 	if err != nil {
-		return armmsi.Identity{}, err
+		return armmsi.Identity{}, Classify(err, opManagedIdentity)
 	}
 	return created.Identity, nil
 }
@@ -80,7 +80,7 @@ func wantAudiences() []string { return []string{oidcazure.Audience} }
 func (az *Azure) ensureFederatedCredential(ctx context.Context) error {
 	creds, err := az.listFederatedCredentials(ctx)
 	if err != nil {
-		return err
+		return Classify(err, opManagedIdentity)
 	}
 
 	switch len(creds) {
@@ -92,7 +92,7 @@ func (az *Azure) ensureFederatedCredential(ctx context.Context) error {
 				Audiences: []*string{to.Ptr(oidcazure.Audience)},
 			},
 		}, nil)
-		return err
+		return Classify(err, opManagedIdentity)
 	case 1:
 		if az.matchesOurs(creds[0]) {
 			return nil

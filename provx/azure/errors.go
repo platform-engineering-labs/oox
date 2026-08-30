@@ -106,6 +106,14 @@ type Operation struct {
 	Scope string
 }
 
+// The two resource providers every call in this package depends on, besides
+// role assignments' own Microsoft.Authorization (which carries a Scope, so
+// it is built per call instead).
+var (
+	opResourceGroup   = Operation{Provider: "Microsoft.Resources"}
+	opManagedIdentity = Operation{Provider: "Microsoft.ManagedIdentity"}
+)
+
 // Classify maps an ARM failure onto one of the typed errors above, leaving
 // anything it does not recognise as a generic error that carries the HTTP
 // status and nothing else: the caller gets a status code to report, not a
