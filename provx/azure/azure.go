@@ -73,12 +73,19 @@ type Azure struct {
 // New builds an Azure provisioner backed by the ambient credential (env
 // vars, workload identity, managed identity, or `az login`).
 //
-// azTenantID is the subscription's Entra tenant. formaeTenantID is the
-// formae tenant whose installation this is, and it appears in the federated
-// credential's subject; the two are unrelated and never spelled alike. The
-// ambient credential needs subscription-scoped Microsoft.ManagedIdentity
-// write access to provision the identity, and Owner or User Access
-// Administrator to create role assignments.
+// azTenantID is the subscription's Entra tenant, and it is optional: derivation
+// from the subscription itself is the normal path (VerifySubscription reads it
+// straight from ARM), but an external or guest account sometimes needs an
+// explicit tenant in order to authenticate at all, before the subscription can
+// even be reached. Pass "" to derive; pass a tenant to have it cross-checked
+// against what the subscription actually reports, with disagreement reported
+// as *TenantMismatchError rather than silently preferred either way.
+//
+// formaeTenantID is the formae tenant whose installation this is, and it
+// appears in the federated credential's subject; the two are unrelated and
+// never spelled alike. The ambient credential needs subscription-scoped
+// Microsoft.ManagedIdentity write access to provision the identity, and Owner
+// or User Access Administrator to create role assignments.
 func New(logger *slog.Logger, subscriptionID, azTenantID, formaeTenantID, installationID, resourceGroup, location string) (*Azure, error) {
 	if logger == nil {
 		logger = slog.Default()
@@ -87,7 +94,8 @@ func New(logger *slog.Logger, subscriptionID, azTenantID, formaeTenantID, instal
 	var missing []string
 	for _, arg := range []struct{ name, value string }{
 		{"subscriptionID", subscriptionID},
-		{"azTenantID", azTenantID},
+		// azTenantID is deliberately not required: "" means derive it from
+		// the subscription.
 		{"formaeTenantID", formaeTenantID},
 		{"installationID", installationID},
 		{"resourceGroup", resourceGroup},
@@ -190,6 +198,11 @@ type Result struct {
 // ensureIdentity and ensureFederatedCredential enforce, so re-running
 // Create converges rather than duplicating anything.
 func (az *Azure) Create(ctx context.Context) (*Result, error) {
+	tenantID, err := az.VerifySubscription(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := az.ensureResourceGroup(ctx); err != nil {
 		return nil, err
 	}
@@ -217,7 +230,7 @@ func (az *Azure) Create(ctx context.Context) (*Result, error) {
 		"clientId", clientID, "principalId", principalID, "identityId", deref(identity.ID))
 
 	return &Result{
-		TenantID:      az.azTenantID,
+		TenantID:      tenantID,
 		ClientID:      clientID,
 		PrincipalID:   principalID,
 		IdentityID:    deref(identity.ID),

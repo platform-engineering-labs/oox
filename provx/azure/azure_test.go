@@ -55,7 +55,10 @@ func TestCreateReturnsTheRegistrationCoordinates(t *testing.T) {
 			return armauthorization.RoleAssignmentsClientCreateResponse{}, nil
 		},
 	}
-	az := newTestAzure(t, rg, ids, fed, roles, nil)
+	subs := &fakeSubscriptions{t: t, get: func(string) (armsubscriptions.ClientGetResponse, error) {
+		return armsubscriptions.ClientGetResponse{Subscription: armsubscriptions.Subscription{TenantID: to.Ptr(testAzTenantID)}}, nil
+	}}
+	az := newTestAzure(t, rg, ids, fed, roles, subs)
 
 	res, err := az.Create(context.Background())
 	if err != nil {
@@ -71,6 +74,63 @@ func TestCreateReturnsTheRegistrationCoordinates(t *testing.T) {
 	}
 	if *res != *want {
 		t.Fatalf("Create() = %+v, want %+v", res, want)
+	}
+}
+
+func TestCreateUsesTheDerivedTenantWhenNoneWasPinned(t *testing.T) {
+	const wantIdentityID = "/subscriptions/" + testSubscriptionID + "/resourceGroups/" + testResourceGroup +
+		"/providers/Microsoft.ManagedIdentity/userAssignedIdentities/" + identityPrefix + testInstallationID
+	const derivedTenant = "derived-tenant-from-arm"
+
+	rg := &fakeResourceGroups{t: t,
+		get: func(string) (armresources.ResourceGroupsClientGetResponse, error) {
+			return armresources.ResourceGroupsClientGetResponse{}, notFoundErr()
+		},
+		createOrUpdate: func(string, armresources.ResourceGroup) (armresources.ResourceGroupsClientCreateOrUpdateResponse, error) {
+			return armresources.ResourceGroupsClientCreateOrUpdateResponse{}, nil
+		},
+	}
+	ids := &fakeIdentities{t: t,
+		get: func(string) (armmsi.UserAssignedIdentitiesClientGetResponse, error) {
+			return armmsi.UserAssignedIdentitiesClientGetResponse{}, notFoundErr()
+		},
+		createOrUpdate: func(string, armmsi.Identity) (armmsi.UserAssignedIdentitiesClientCreateOrUpdateResponse, error) {
+			return armmsi.UserAssignedIdentitiesClientCreateOrUpdateResponse{Identity: armmsi.Identity{
+				ID:         to.Ptr(wantIdentityID),
+				Properties: &armmsi.UserAssignedIdentityProperties{ClientID: to.Ptr("client-1"), PrincipalID: to.Ptr("principal-1")},
+			}}, nil
+		},
+	}
+	fed := &fakeFederatedCreds{t: t,
+		createOrUpdate: func(string, armmsi.FederatedIdentityCredential) (armmsi.FederatedIdentityCredentialsClientCreateOrUpdateResponse, error) {
+			return armmsi.FederatedIdentityCredentialsClientCreateOrUpdateResponse{}, nil
+		},
+	}
+	roles := &fakeRoleAssignments{t: t,
+		create: func(string, string, armauthorization.RoleAssignmentCreateParameters) (armauthorization.RoleAssignmentsClientCreateResponse, error) {
+			return armauthorization.RoleAssignmentsClientCreateResponse{}, nil
+		},
+	}
+	subs := &fakeSubscriptions{t: t, get: func(string) (armsubscriptions.ClientGetResponse, error) {
+		return armsubscriptions.ClientGetResponse{Subscription: armsubscriptions.Subscription{TenantID: to.Ptr(derivedTenant)}}, nil
+	}}
+	az := newTestAzure(t, rg, ids, fed, roles, subs)
+	az.azTenantID = "" // the caller did not supply one: New must accept this and Create must derive it
+
+	got, err := az.VerifySubscription(context.Background())
+	if err != nil {
+		t.Fatalf("VerifySubscription: err = %v", err)
+	}
+	if got != derivedTenant {
+		t.Fatalf("VerifySubscription() = %q, want the derived tenant %q", got, derivedTenant)
+	}
+
+	res, err := az.Create(context.Background())
+	if err != nil {
+		t.Fatalf("Create: err = %v", err)
+	}
+	if res.TenantID != derivedTenant {
+		t.Fatalf("Result.TenantID = %q, want the derived tenant %q (must not be empty)", res.TenantID, derivedTenant)
 	}
 }
 
