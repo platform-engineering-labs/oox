@@ -7,7 +7,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/subscription/armsubscription"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 )
 
 // The narrow slices of each ARM client this package actually calls. Tests
@@ -38,5 +38,5 @@ type roleAssignmentsAPI interface {
 }
 
 type subscriptionsAPI interface {
-	Get(ctx context.Context, subscriptionID string, options *armsubscription.SubscriptionsClientGetOptions) (armsubscription.SubscriptionsClientGetResponse, error)
+	Get(ctx context.Context, subscriptionID string, options *armsubscriptions.ClientGetOptions) (armsubscriptions.ClientGetResponse, error)
 }

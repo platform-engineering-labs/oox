@@ -10,7 +10,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/subscription/armsubscription"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 )
 
 func discardLogger() *slog.Logger {
@@ -197,10 +197,10 @@ func (f *fakeRoleAssignments) DeleteByID(_ context.Context, id string, _ *armaut
 
 type fakeSubscriptions struct {
 	t   *testing.T
-	get func(subscriptionID string) (armsubscription.SubscriptionsClientGetResponse, error)
+	get func(subscriptionID string) (armsubscriptions.ClientGetResponse, error)
 }
 
-func (f *fakeSubscriptions) Get(_ context.Context, subscriptionID string, _ *armsubscription.SubscriptionsClientGetOptions) (armsubscription.SubscriptionsClientGetResponse, error) {
+func (f *fakeSubscriptions) Get(_ context.Context, subscriptionID string, _ *armsubscriptions.ClientGetOptions) (armsubscriptions.ClientGetResponse, error) {
 	f.t.Helper()
 	if f.get == nil {
 		f.t.Fatal("unexpected call Subscriptions.Get")

@@ -13,7 +13,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/subscription/armsubscription"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/google/uuid"
 	"github.com/platform-engineering-labs/oox/provx"
 )
@@ -124,7 +124,7 @@ func New(logger *slog.Logger, subscriptionID, azTenantID, formaeTenantID, instal
 	if err != nil {
 		return nil, fmt.Errorf("azure: building authorization client: %w", err)
 	}
-	subClient, err := armsubscription.NewSubscriptionsClient(cred, nil)
+	subClient, err := armsubscriptions.NewClient(cred, nil)
 	if err != nil {
 		return nil, fmt.Errorf("azure: building subscriptions client: %w", err)
 	}
@@ -262,14 +262,30 @@ func (az *Azure) Delete(ctx context.Context) error {
 }
 
 // VerifySubscription confirms the ambient credential can reach the target
-// subscription and returns its pinned Entra tenant - the same azTenantID
-// passed to New, echoed back once the subscription is confirmed reachable
-// under it.
+// subscription and returns its actual Entra tenant, read from ARM rather
+// than trusted from the caller: Microsoft.Resources' Subscriptions.Get
+// response carries a TenantID field precisely so this doesn't have to be
+// taken on faith. When azTenantID was already pinned at construction, the
+// two are cross-checked - continuing under a mismatched tenant would
+// register a federated credential trust with the wrong one - and a
+// disagreement is reported as *TenantMismatchError rather than silently
+// preferring one value over the other.
 func (az *Azure) VerifySubscription(ctx context.Context) (string, error) {
-	if _, err := az.subscriptions.Get(ctx, az.subscriptionID, nil); err != nil {
-		return "", Classify(err, opResourceGroup)
+	resp, err := az.subscriptions.Get(ctx, az.subscriptionID, nil)
+	if err != nil {
+		return "", Classify(err, opSubscription)
 	}
-	return az.azTenantID, nil
+
+	actual := deref(resp.TenantID)
+	if actual == "" {
+		// ARM did not report one. Fall back to what the caller pinned
+		// rather than returning an empty tenant.
+		return az.azTenantID, nil
+	}
+	if az.azTenantID != "" && actual != az.azTenantID {
+		return "", &TenantMismatchError{Pinned: az.azTenantID, Actual: actual}
+	}
+	return actual, nil
 }
 
 // identityName is the deterministic name of this installation's managed

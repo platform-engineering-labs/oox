@@ -10,8 +10,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v2"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/subscription/armsubscription"
-	oidcazure "github.com/platform-engineering-labs/oox/oidcx/azure"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/platform-engineering-labs/oox/provx"
 )
 
@@ -111,7 +110,7 @@ func TestDeleteRemovesOnlyThisInstallationsIdentity(t *testing.T) {
 	}}
 	az.identities = store.fake()
 	az.federatedCreds = &fakeFederatedCreds{t: t, list: []*armmsi.FederatedIdentityCredential{
-		fedCred(credentialName, az.issuer, az.subject, oidcazure.Audience),
+		fedCred(credentialName, az.issuer, az.subject, tokenAudience),
 	}}
 	az.roleAssignments = &fakeRoleAssignments{t: t, listForScope: nil}
 	// az.resourceGroups is left nil: Delete has no resource-group method to
@@ -158,9 +157,24 @@ func TestDeleteOfAnAlreadyMissingIdentityIsANoOp(t *testing.T) {
 	}
 }
 
-func TestVerifySubscriptionReturnsThePinnedTenantID(t *testing.T) {
-	az := newTestAzure(t, nil, nil, nil, nil, &fakeSubscriptions{t: t, get: func(string) (armsubscription.SubscriptionsClientGetResponse, error) {
-		return armsubscription.SubscriptionsClientGetResponse{}, nil
+func TestVerifySubscriptionDerivesTheTenantWhenNoneIsPinned(t *testing.T) {
+	az := newTestAzure(t, nil, nil, nil, nil, &fakeSubscriptions{t: t, get: func(string) (armsubscriptions.ClientGetResponse, error) {
+		return armsubscriptions.ClientGetResponse{Subscription: armsubscriptions.Subscription{TenantID: to.Ptr("derived-tenant")}}, nil
+	}})
+	az.azTenantID = ""
+
+	got, err := az.VerifySubscription(context.Background())
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if got != "derived-tenant" {
+		t.Fatalf("got = %q, want the tenant ARM reported", got)
+	}
+}
+
+func TestVerifySubscriptionAcceptsAPinThatMatchesTheDerivedTenant(t *testing.T) {
+	az := newTestAzure(t, nil, nil, nil, nil, &fakeSubscriptions{t: t, get: func(string) (armsubscriptions.ClientGetResponse, error) {
+		return armsubscriptions.ClientGetResponse{Subscription: armsubscriptions.Subscription{TenantID: to.Ptr(testAzTenantID)}}, nil
 	}})
 
 	got, err := az.VerifySubscription(context.Background())
@@ -168,13 +182,30 @@ func TestVerifySubscriptionReturnsThePinnedTenantID(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	if got != testAzTenantID {
-		t.Fatalf("got = %q, want the pinned tenant %q", got, testAzTenantID)
+		t.Fatalf("got = %q, want %q", got, testAzTenantID)
+	}
+}
+
+func TestVerifySubscriptionReportsAMismatchedPin(t *testing.T) {
+	az := newTestAzure(t, nil, nil, nil, nil, &fakeSubscriptions{t: t, get: func(string) (armsubscriptions.ClientGetResponse, error) {
+		return armsubscriptions.ClientGetResponse{Subscription: armsubscriptions.Subscription{TenantID: to.Ptr("some-other-tenant")}}, nil
+	}})
+	// az.azTenantID keeps its default (testAzTenantID), which disagrees with
+	// what the fake reports the subscription actually belongs to.
+
+	_, err := az.VerifySubscription(context.Background())
+	var mismatch *TenantMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("want TenantMismatchError, got %v", err)
+	}
+	if mismatch.Pinned != testAzTenantID || mismatch.Actual != "some-other-tenant" {
+		t.Fatalf("mismatch = %+v", mismatch)
 	}
 }
 
 func TestVerifySubscriptionClassifiesFailure(t *testing.T) {
-	az := newTestAzure(t, nil, nil, nil, nil, &fakeSubscriptions{t: t, get: func(string) (armsubscription.SubscriptionsClientGetResponse, error) {
-		return armsubscription.SubscriptionsClientGetResponse{}, &azcore.ResponseError{ErrorCode: "AuthorizationFailed", StatusCode: 403}
+	az := newTestAzure(t, nil, nil, nil, nil, &fakeSubscriptions{t: t, get: func(string) (armsubscriptions.ClientGetResponse, error) {
+		return armsubscriptions.ClientGetResponse{}, &azcore.ResponseError{ErrorCode: "AuthorizationFailed", StatusCode: 403}
 	}})
 
 	_, err := az.VerifySubscription(context.Background())

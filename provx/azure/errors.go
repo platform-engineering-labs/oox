@@ -20,6 +20,18 @@ func (e *LocationMismatchError) Error() string {
 		e.ResourceGroup, e.Existing, e.Requested)
 }
 
+// TenantMismatchError: the subscription's actual Entra tenant, read from
+// ARM, differs from the one pinned at construction. Proceeding under the
+// pinned value would register the federated credential's trust with the
+// wrong tenant, so this is reported rather than silently preferred.
+type TenantMismatchError struct {
+	Pinned, Actual string
+}
+
+func (e *TenantMismatchError) Error() string {
+	return fmt.Sprintf("subscription belongs to tenant %s, not the pinned %s", e.Actual, e.Pinned)
+}
+
 // IdentityNotOursError: the managed identity carries a federated credential
 // this package does not recognize as its own - either a second credential
 // alongside a matching one, or a single credential whose issuer, subject or
@@ -106,12 +118,13 @@ type Operation struct {
 	Scope string
 }
 
-// The two resource providers every call in this package depends on, besides
-// role assignments' own Microsoft.Authorization (which carries a Scope, so
-// it is built per call instead).
+// The resource providers this package's non-role-assignment calls depend on
+// (role assignments carry their own Microsoft.Authorization Operation, built
+// per call with its Scope).
 var (
 	opResourceGroup   = Operation{Provider: "Microsoft.Resources"}
 	opManagedIdentity = Operation{Provider: "Microsoft.ManagedIdentity"}
+	opSubscription    = Operation{Provider: "Microsoft.Resources"}
 )
 
 // Classify maps an ARM failure onto one of the typed errors above, leaving

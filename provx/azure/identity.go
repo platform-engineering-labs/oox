@@ -8,8 +8,20 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
-	oidcazure "github.com/platform-engineering-labs/oox/oidcx/azure"
 )
+
+// tokenAudience is the OAuth audience Entra workload identity federation
+// expects for a client-assertion exchange. It must equal the Audience
+// constant the root oox module's Azure client-credential package declares
+// for the other half of this same exchange, but the two are deliberately
+// not sharing code: that package lives in the root module, and provx is
+// consumed standalone (by formae, which pins its own go toolchain) - an
+// import across that module edge would drag the root module's newer go
+// directive into provx and force every consumer onto it. Each side pins the
+// identical literal in its own tests instead - see the golden test in
+// identity_test.go - so a change to one side that drifts from the other
+// fails loudly rather than silently.
+const tokenAudience = "api://AzureADTokenExchange"
 
 // ensureResourceGroup converges the target resource group: create it, tagged
 // as ours, when it does not exist; adopt it unmodified when it does.
@@ -63,7 +75,7 @@ func (az *Azure) ensureIdentity(ctx context.Context) (armmsi.Identity, error) {
 
 // wantAudiences is the exact audience list every federated credential this
 // package creates or adopts must carry.
-func wantAudiences() []string { return []string{oidcazure.Audience} }
+func wantAudiences() []string { return []string{tokenAudience} }
 
 // ensureFederatedCredential converges the identity's federated identity
 // credential.
@@ -88,7 +100,7 @@ func (az *Azure) ensureFederatedCredential(ctx context.Context) error {
 			Properties: &armmsi.FederatedIdentityCredentialProperties{
 				Issuer:    to.Ptr(az.issuer),
 				Subject:   to.Ptr(az.subject),
-				Audiences: []*string{to.Ptr(oidcazure.Audience)},
+				Audiences: []*string{to.Ptr(tokenAudience)},
 			},
 		}, nil)
 		return Classify(err, opManagedIdentity)

@@ -10,7 +10,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
-	oidcazure "github.com/platform-engineering-labs/oox/oidcx/azure"
 )
 
 func notFoundErr() error {
@@ -175,7 +174,7 @@ func ourSubject(az *Azure) string { return az.subject }
 func TestAdoptionAcceptsExactlyOurCredential(t *testing.T) {
 	az := newTestAzure(t, nil, nil, nil, nil, nil)
 	fed := &fakeFederatedCreds{t: t, list: []*armmsi.FederatedIdentityCredential{
-		fedCred(credentialName, ourIssuer(az), ourSubject(az), oidcazure.Audience),
+		fedCred(credentialName, ourIssuer(az), ourSubject(az), tokenAudience),
 	}}
 	az.federatedCreds = fed
 	// createOrUpdate nil: an already-converged credential must not be written to.
@@ -188,7 +187,7 @@ func TestAdoptionAcceptsExactlyOurCredential(t *testing.T) {
 func TestAdoptionRefusesAWrongIssuer(t *testing.T) {
 	az := newTestAzure(t, nil, nil, nil, nil, nil)
 	az.federatedCreds = &fakeFederatedCreds{t: t, list: []*armmsi.FederatedIdentityCredential{
-		fedCred(credentialName, "https://evil.example.com", ourSubject(az), oidcazure.Audience),
+		fedCred(credentialName, "https://evil.example.com", ourSubject(az), tokenAudience),
 	}}
 
 	err := az.ensureFederatedCredential(context.Background())
@@ -201,7 +200,7 @@ func TestAdoptionRefusesAWrongIssuer(t *testing.T) {
 func TestAdoptionRefusesAWrongSubject(t *testing.T) {
 	az := newTestAzure(t, nil, nil, nil, nil, nil)
 	az.federatedCreds = &fakeFederatedCreds{t: t, list: []*armmsi.FederatedIdentityCredential{
-		fedCred(credentialName, ourIssuer(az), "fai:other/x", oidcazure.Audience),
+		fedCred(credentialName, ourIssuer(az), "fai:other/x", tokenAudience),
 	}}
 
 	err := az.ensureFederatedCredential(context.Background())
@@ -214,7 +213,7 @@ func TestAdoptionRefusesAWrongSubject(t *testing.T) {
 func TestAdoptionRefusesAnIdentityCarryingAForeignCredential(t *testing.T) {
 	az := newTestAzure(t, nil, nil, nil, nil, nil)
 	fed := &fakeFederatedCreds{t: t, list: []*armmsi.FederatedIdentityCredential{
-		fedCred(credentialName, ourIssuer(az), ourSubject(az), oidcazure.Audience),
+		fedCred(credentialName, ourIssuer(az), ourSubject(az), tokenAudience),
 		fedCred("someone-elses-cred", "https://evil.example.com", "not-ours", "some-other-audience"),
 	}}
 	az.federatedCreds = fed
@@ -230,7 +229,7 @@ func TestAdoptionRefusesAnIdentityCarryingAForeignCredential(t *testing.T) {
 func TestIdentityNotOursNamesWhatToRemove(t *testing.T) {
 	az := newTestAzure(t, nil, nil, nil, nil, nil)
 	az.federatedCreds = &fakeFederatedCreds{t: t, list: []*armmsi.FederatedIdentityCredential{
-		fedCred(credentialName, ourIssuer(az), ourSubject(az), oidcazure.Audience),
+		fedCred(credentialName, ourIssuer(az), ourSubject(az), tokenAudience),
 		fedCred("someone-elses-cred", "https://evil.example.com", "not-ours", "some-other-audience"),
 	}}
 
@@ -261,5 +260,35 @@ func TestEnsureFederatedCredentialCreatesWhenNoneExist(t *testing.T) {
 	}
 	if deref(got.Properties.Issuer) != ourIssuer(az) || deref(got.Properties.Subject) != ourSubject(az) {
 		t.Fatalf("got = %+v", got.Properties)
+	}
+}
+
+// goldenAudience is the literal OAuth audience the root oox module's Azure
+// client-credential package pins on its side of the module boundary,
+// written out here rather than referenced, so a change to either side's
+// literal without updating the other fails this test instead of silently
+// drifting into a token exchange Entra refuses.
+const goldenAudience = "api://AzureADTokenExchange"
+
+func TestFederatedCredentialAudienceMatchesTheSiblingPackageConstant(t *testing.T) {
+	if tokenAudience != goldenAudience {
+		t.Fatalf("tokenAudience = %q, want the golden literal %q (kept in sync by hand with the root module's own Audience constant)", tokenAudience, goldenAudience)
+	}
+
+	az := newTestAzure(t, nil, nil, nil, nil, nil)
+	var got armmsi.FederatedIdentityCredential
+	az.federatedCreds = &fakeFederatedCreds{t: t,
+		createOrUpdate: func(_ string, params armmsi.FederatedIdentityCredential) (armmsi.FederatedIdentityCredentialsClientCreateOrUpdateResponse, error) {
+			got = params
+			return armmsi.FederatedIdentityCredentialsClientCreateOrUpdateResponse{FederatedIdentityCredential: params}, nil
+		},
+	}
+
+	if err := az.ensureFederatedCredential(context.Background()); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	gotAudiences := derefAll(got.Properties.Audiences)
+	if len(gotAudiences) != 1 || gotAudiences[0] != goldenAudience {
+		t.Fatalf("Audiences = %v, want exactly [%q]", gotAudiences, goldenAudience)
 	}
 }
