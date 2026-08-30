@@ -2,9 +2,13 @@ package azure
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
+	oidcazure "github.com/platform-engineering-labs/oox/oidcx/azure"
 )
 
 // ensureResourceGroup converges the target resource group: create it, tagged
@@ -32,4 +36,142 @@ func (az *Azure) ensureResourceGroup(ctx context.Context) error {
 		Tags:     map[string]*string{ownerTagKey: to.Ptr(ownerTagValue)},
 	}, nil)
 	return err
+}
+
+// ensureIdentity converges the target managed identity: create it, tagged as
+// ours, when it does not exist; adopt it unmodified when it does. Whether an
+// adopted identity is safe to actually use is decided separately, by
+// ensureFederatedCredential: the identity's own tags say nothing about that.
+func (az *Azure) ensureIdentity(ctx context.Context) (armmsi.Identity, error) {
+	existing, err := az.identities.Get(ctx, az.resourceGroup, az.identityName(), nil)
+	if err == nil {
+		return existing.Identity, nil
+	}
+	if armStatusCode(err) != 404 {
+		return armmsi.Identity{}, err
+	}
+
+	created, err := az.identities.CreateOrUpdate(ctx, az.resourceGroup, az.identityName(), armmsi.Identity{
+		Location: to.Ptr(az.location),
+		Tags:     map[string]*string{ownerTagKey: to.Ptr(ownerTagValue)},
+	}, nil)
+	if err != nil {
+		return armmsi.Identity{}, err
+	}
+	return created.Identity, nil
+}
+
+// wantAudiences is the exact audience list every federated credential this
+// package creates or adopts must carry.
+func wantAudiences() []string { return []string{oidcazure.Audience} }
+
+// ensureFederatedCredential converges the identity's federated identity
+// credential.
+//
+// A federated credential grants near-owner access to whoever can present a
+// token matching its issuer, subject and audience, so adoption is strict
+// rather than reconciling: an identity is only ours to use when it carries
+// exactly one federated credential and that credential already matches ours
+// exactly. Anything else - zero credentials aside, which is simply a fresh
+// identity to finish setting up - is refused rather than patched, because
+// patching would either silently take over a credential someone else
+// depends on, or silently leave a second, foreign credential in place that
+// can still assume the identity.
+func (az *Azure) ensureFederatedCredential(ctx context.Context) error {
+	creds, err := az.listFederatedCredentials(ctx)
+	if err != nil {
+		return err
+	}
+
+	switch len(creds) {
+	case 0:
+		_, err := az.federatedCreds.CreateOrUpdate(ctx, az.resourceGroup, az.identityName(), credentialName, armmsi.FederatedIdentityCredential{
+			Properties: &armmsi.FederatedIdentityCredentialProperties{
+				Issuer:    to.Ptr(az.issuer),
+				Subject:   to.Ptr(az.subject),
+				Audiences: []*string{to.Ptr(oidcazure.Audience)},
+			},
+		}, nil)
+		return err
+	case 1:
+		if az.matchesOurs(creds[0]) {
+			return nil
+		}
+		return &IdentityNotOursError{Name: deref(creds[0].Name), Reason: az.mismatchReason(creds[0])}
+	default:
+		for _, c := range creds {
+			if !az.matchesOurs(c) {
+				return &IdentityNotOursError{Name: deref(c.Name), Reason: az.mismatchReason(c)}
+			}
+		}
+		names := make([]string, len(creds))
+		for i, c := range creds {
+			names[i] = deref(c.Name)
+		}
+		return &IdentityNotOursError{
+			Name:   strings.Join(names, ", "),
+			Reason: fmt.Sprintf("%d federated credentials present, expected exactly 1", len(creds)),
+		}
+	}
+}
+
+// listFederatedCredentials enumerates every federated credential on this
+// installation's identity, across pagination.
+func (az *Azure) listFederatedCredentials(ctx context.Context) ([]*armmsi.FederatedIdentityCredential, error) {
+	var all []*armmsi.FederatedIdentityCredential
+	pager := az.federatedCreds.NewListPager(az.resourceGroup, az.identityName(), nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page.Value...)
+	}
+	return all, nil
+}
+
+// matchesOurs reports whether an existing federated credential's issuer,
+// subject and audiences are exactly what this installation would create.
+func (az *Azure) matchesOurs(c *armmsi.FederatedIdentityCredential) bool {
+	if c == nil || c.Properties == nil {
+		return false
+	}
+	p := c.Properties
+	return deref(p.Issuer) == az.issuer &&
+		deref(p.Subject) == az.subject &&
+		sameStrings(derefAll(p.Audiences), wantAudiences())
+}
+
+// mismatchReason names every field of an existing credential that differs
+// from what this installation would create, so a refusal is actionable
+// rather than a dead end.
+func (az *Azure) mismatchReason(c *armmsi.FederatedIdentityCredential) string {
+	var issuer, subject string
+	var audiences []string
+	if c.Properties != nil {
+		issuer = deref(c.Properties.Issuer)
+		subject = deref(c.Properties.Subject)
+		audiences = derefAll(c.Properties.Audiences)
+	}
+
+	var diffs []string
+	if issuer != az.issuer {
+		diffs = append(diffs, fmt.Sprintf("issuer is %q, want %q", issuer, az.issuer))
+	}
+	if subject != az.subject {
+		diffs = append(diffs, fmt.Sprintf("subject is %q, want %q", subject, az.subject))
+	}
+	if want := wantAudiences(); !sameStrings(audiences, want) {
+		diffs = append(diffs, fmt.Sprintf("audiences are %v, want %v", audiences, want))
+	}
+	return strings.Join(diffs, "; ")
+}
+
+// derefAll dereferences every pointer in a slice, in order.
+func derefAll(ptrs []*string) []string {
+	out := make([]string, len(ptrs))
+	for i, p := range ptrs {
+		out[i] = deref(p)
+	}
+	return out
 }
