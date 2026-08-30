@@ -168,6 +168,110 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// Result reports the coordinates Create converged to.
+type Result struct {
+	// TenantID is the subscription's Entra tenant, registered as
+	// azureTenantId.
+	TenantID string
+	// ClientID is the managed identity's client id (its "appId"), registered
+	// as azureClientId. This is distinct from PrincipalID, its service
+	// principal object id: confusing the two is a real and easy failure.
+	ClientID      string
+	PrincipalID   string
+	IdentityID    string
+	ResourceGroup string
+	Location      string
+}
+
+// Create converges every resource this connection needs: the resource
+// group, the managed identity, its federated identity credential, and the
+// subscription-scoped role assignments. Each step is independently
+// idempotent, and existing objects are adopted under the ownership rules
+// ensureIdentity and ensureFederatedCredential enforce, so re-running
+// Create converges rather than duplicating anything.
+func (az *Azure) Create(ctx context.Context) (*Result, error) {
+	if err := az.ensureResourceGroup(ctx); err != nil {
+		return nil, err
+	}
+
+	identity, err := az.ensureIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := az.ensureFederatedCredential(ctx); err != nil {
+		return nil, err
+	}
+
+	var clientID, principalID string
+	if identity.Properties != nil {
+		clientID = deref(identity.Properties.ClientID)
+		principalID = deref(identity.Properties.PrincipalID)
+	}
+
+	if err := az.ensureRoleAssignments(ctx, principalID); err != nil {
+		return nil, err
+	}
+
+	az.logger.Info("azure connect resources ready",
+		"clientId", clientID, "principalId", principalID, "identityId", deref(identity.ID))
+
+	return &Result{
+		TenantID:      az.azTenantID,
+		ClientID:      clientID,
+		PrincipalID:   principalID,
+		IdentityID:    deref(identity.ID),
+		ResourceGroup: az.resourceGroup,
+		Location:      az.location,
+	}, nil
+}
+
+// Delete removes this installation's role assignments and managed identity.
+// It never removes the resource group, which may hold other installations'
+// identities, and it revalidates the identity's federated credential before
+// deleting anything: resolving by the deterministic name alone and deleting
+// whatever sits there would destroy a foreign identity that happens to
+// occupy it. A missing identity is treated as already deleted.
+func (az *Azure) Delete(ctx context.Context) error {
+	existing, err := az.identities.Get(ctx, az.resourceGroup, az.identityName(), nil)
+	if err != nil {
+		if armStatusCode(err) == 404 {
+			return nil
+		}
+		return Classify(err, opManagedIdentity)
+	}
+
+	if err := az.verifyFederatedCredential(ctx); err != nil {
+		return err
+	}
+
+	var principalID string
+	if existing.Properties != nil {
+		principalID = deref(existing.Properties.PrincipalID)
+	}
+	if principalID != "" {
+		if err := az.deleteRoleAssignments(ctx, principalID); err != nil {
+			return err
+		}
+	}
+
+	if _, err := az.identities.Delete(ctx, az.resourceGroup, az.identityName(), nil); err != nil && armStatusCode(err) != 404 {
+		return Classify(err, opManagedIdentity)
+	}
+	return nil
+}
+
+// VerifySubscription confirms the ambient credential can reach the target
+// subscription and returns its pinned Entra tenant - the same azTenantID
+// passed to New, echoed back once the subscription is confirmed reachable
+// under it.
+func (az *Azure) VerifySubscription(ctx context.Context) (string, error) {
+	if _, err := az.subscriptions.Get(ctx, az.subscriptionID, nil); err != nil {
+		return "", Classify(err, opResourceGroup)
+	}
+	return az.azTenantID, nil
+}
+
 // identityName is the deterministic name of this installation's managed
 // identity.
 func (az *Azure) identityName() string {

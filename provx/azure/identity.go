@@ -83,8 +83,7 @@ func (az *Azure) ensureFederatedCredential(ctx context.Context) error {
 		return Classify(err, opManagedIdentity)
 	}
 
-	switch len(creds) {
-	case 0:
+	if len(creds) == 0 {
 		_, err := az.federatedCreds.CreateOrUpdate(ctx, az.resourceGroup, az.identityName(), credentialName, armmsi.FederatedIdentityCredential{
 			Properties: &armmsi.FederatedIdentityCredentialProperties{
 				Issuer:    to.Ptr(az.issuer),
@@ -93,25 +92,50 @@ func (az *Azure) ensureFederatedCredential(ctx context.Context) error {
 			},
 		}, nil)
 		return Classify(err, opManagedIdentity)
-	case 1:
-		if az.matchesOurs(creds[0]) {
-			return nil
+	}
+	return az.solelyOurs(creds)
+}
+
+// verifyFederatedCredential re-checks the same adoption rule
+// ensureFederatedCredential enforces, without ever writing: Delete must
+// refuse an identity that is not safely ours before removing anything, and
+// resolving by deterministic name and deleting whatever sits there would
+// destroy a foreign identity occupying that name. Unlike
+// ensureFederatedCredential, zero credentials here is also a refusal: by the
+// time Delete runs, this installation's own Create should have left exactly
+// one, so their absence means this is not the identity formae created.
+func (az *Azure) verifyFederatedCredential(ctx context.Context) error {
+	creds, err := az.listFederatedCredentials(ctx)
+	if err != nil {
+		return Classify(err, opManagedIdentity)
+	}
+	return az.solelyOurs(creds)
+}
+
+// solelyOurs reports whether creds is exactly the one federated credential
+// this installation would create, returning an *IdentityNotOursError naming
+// the offending credential (or, when none of them individually disagree,
+// the count) otherwise.
+func (az *Azure) solelyOurs(creds []*armmsi.FederatedIdentityCredential) error {
+	for _, c := range creds {
+		if !az.matchesOurs(c) {
+			return &IdentityNotOursError{Name: deref(c.Name), Reason: az.mismatchReason(c)}
 		}
-		return &IdentityNotOursError{Name: deref(creds[0].Name), Reason: az.mismatchReason(creds[0])}
-	default:
-		for _, c := range creds {
-			if !az.matchesOurs(c) {
-				return &IdentityNotOursError{Name: deref(c.Name), Reason: az.mismatchReason(c)}
-			}
-		}
-		names := make([]string, len(creds))
-		for i, c := range creds {
-			names[i] = deref(c.Name)
-		}
-		return &IdentityNotOursError{
-			Name:   strings.Join(names, ", "),
-			Reason: fmt.Sprintf("%d federated credentials present, expected exactly 1", len(creds)),
-		}
+	}
+	if len(creds) == 1 {
+		return nil
+	}
+	names := make([]string, len(creds))
+	for i, c := range creds {
+		names[i] = deref(c.Name)
+	}
+	name := strings.Join(names, ", ")
+	if name == "" {
+		name = "(none)"
+	}
+	return &IdentityNotOursError{
+		Name:   name,
+		Reason: fmt.Sprintf("%d federated credentials present, expected exactly 1", len(creds)),
 	}
 }
 
