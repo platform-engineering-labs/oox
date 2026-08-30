@@ -83,17 +83,15 @@ func (e *ProviderNotRegisteredError) Unwrap() error { return e.Cause }
 // RoleAssignmentForbiddenError because both arrive as the same ARM error
 // code (AuthorizationFailed) and the remedies are unrelated: one needs
 // Owner/User Access Administrator specifically, the other needs whatever
-// permission the failed action requires.
+// permission the failed action requires - which this package does not
+// itself know, so it is left to the underlying ARM error Cause carries
+// rather than guessed at.
 type PermissionDeniedError struct {
-	Action, Scope string
-	Cause         error
+	Cause error
 }
 
 func (e *PermissionDeniedError) Error() string {
-	if e.Action == "" && e.Scope == "" {
-		return fmt.Sprintf("permission denied: %v", e.Cause)
-	}
-	return fmt.Sprintf("permission denied performing %s at %s", e.Action, e.Scope)
+	return fmt.Sprintf("permission denied: %v", e.Cause)
 }
 
 func (e *PermissionDeniedError) Unwrap() error { return e.Cause }
@@ -120,11 +118,12 @@ type Operation struct {
 
 // The resource providers this package's non-role-assignment calls depend on
 // (role assignments carry their own Microsoft.Authorization Operation, built
-// per call with its Scope).
+// per call with its Scope). Resource group and subscription calls share one
+// value: both are Microsoft.Resources, and there is nothing operation-
+// specific to say about either beyond that.
 var (
-	opResourceGroup   = Operation{Provider: "Microsoft.Resources"}
-	opManagedIdentity = Operation{Provider: "Microsoft.ManagedIdentity"}
-	opSubscription    = Operation{Provider: "Microsoft.Resources"}
+	opMicrosoftResources = Operation{Provider: "Microsoft.Resources"}
+	opManagedIdentity    = Operation{Provider: "Microsoft.ManagedIdentity"}
 )
 
 // Classify maps an ARM failure onto one of the typed errors above, leaving
@@ -154,12 +153,12 @@ func Classify(err error, op Operation) error {
 		if op.RoleAssignment {
 			return &RoleAssignmentForbiddenError{Scope: op.Scope, Cause: err}
 		}
-
-	case "RoleAssignmentExists":
-		if op.RoleAssignment {
-			return nil
-		}
 	}
+
+	// RoleAssignmentExists and PrincipalNotFound/PrincipalTypeNotSupported
+	// have no case here: ensureRoleAssignment's own retry loop (roles.go)
+	// intercepts all three before any of them reach Classify, so a case for
+	// them here would be dead code with no caller.
 
 	// Empty or unrecognised: a generic error carrying the status, and
 	// deliberately no cause - the raw ARM error is not exposed as something

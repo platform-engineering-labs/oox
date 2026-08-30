@@ -40,14 +40,14 @@ func (az *Azure) ensureResourceGroup(ctx context.Context) error {
 		return nil
 	}
 	if armStatusCode(err) != 404 {
-		return Classify(err, opResourceGroup)
+		return Classify(err, opMicrosoftResources)
 	}
 
 	_, err = az.resourceGroups.CreateOrUpdate(ctx, az.resourceGroup, armresources.ResourceGroup{
 		Location: to.Ptr(az.location),
 		Tags:     map[string]*string{ownerTagKey: to.Ptr(ownerTagValue)},
 	}, nil)
-	return Classify(err, opResourceGroup)
+	return Classify(err, opMicrosoftResources)
 }
 
 // ensureIdentity converges the target managed identity: create it, tagged as

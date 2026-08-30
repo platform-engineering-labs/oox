@@ -175,9 +175,20 @@ func TestDeleteRoleAssignmentsOnlyRemovesTheRolesThisPackageGrants(t *testing.T)
 	az := newTestAzure(t, nil, nil, nil, nil, nil)
 	roles := &fakeRoleAssignments{t: t,
 		listForScope: []*armauthorization.RoleAssignment{
-			{ID: to.Ptr("/id/1"), Properties: &armauthorization.RoleAssignmentProperties{RoleDefinitionID: to.Ptr(az.roleDefinitionID(contributorRoleID))}},
-			{ID: to.Ptr("/id/2"), Properties: &armauthorization.RoleAssignmentProperties{RoleDefinitionID: to.Ptr(az.roleDefinitionID(userAccessAdminRoleID))}},
-			{ID: to.Ptr("/id/3"), Properties: &armauthorization.RoleAssignmentProperties{RoleDefinitionID: to.Ptr(az.roleDefinitionID("some-other-role"))}},
+			{ID: to.Ptr("/id/1"), Properties: &armauthorization.RoleAssignmentProperties{
+				PrincipalID: to.Ptr(testPrincipalID), RoleDefinitionID: to.Ptr(az.roleDefinitionID(contributorRoleID))}},
+			{ID: to.Ptr("/id/2"), Properties: &armauthorization.RoleAssignmentProperties{
+				PrincipalID: to.Ptr(testPrincipalID), RoleDefinitionID: to.Ptr(az.roleDefinitionID(userAccessAdminRoleID))}},
+			{ID: to.Ptr("/id/3"), Properties: &armauthorization.RoleAssignmentProperties{
+				PrincipalID: to.Ptr(testPrincipalID), RoleDefinitionID: to.Ptr(az.roleDefinitionID("some-other-role"))}},
+			// Same role, a different principal. The server-side $filter is
+			// supposed to keep this out of the page in the first place, but
+			// this fixture proves the client does not also trust that filter
+			// blindly: if it were ever dropped, mistyped, or not honoured by
+			// ARM, this is the assignment that would otherwise get deleted
+			// out from under someone else.
+			{ID: to.Ptr("/id/4"), Properties: &armauthorization.RoleAssignmentProperties{
+				PrincipalID: to.Ptr("some-other-principal"), RoleDefinitionID: to.Ptr(az.roleDefinitionID(contributorRoleID))}},
 		},
 		deleteByID: func(id string) (armauthorization.RoleAssignmentsClientDeleteByIDResponse, error) {
 			deleted = append(deleted, id)
@@ -190,7 +201,7 @@ func TestDeleteRoleAssignmentsOnlyRemovesTheRolesThisPackageGrants(t *testing.T)
 		t.Fatalf("err = %v", err)
 	}
 	if len(deleted) != 2 || !contains(deleted, "/id/1") || !contains(deleted, "/id/2") {
-		t.Fatalf("deleted = %v, want exactly the two roles this package grants", deleted)
+		t.Fatalf("deleted = %v, want exactly the two roles this package grants for this principal", deleted)
 	}
 }
 
@@ -201,4 +212,37 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func TestDeleteRoleAssignmentsClassifiesAForbiddenDeletion(t *testing.T) {
+	az := newTestAzure(t, nil, nil, nil, nil, nil)
+	roles := &fakeRoleAssignments{t: t,
+		listForScope: []*armauthorization.RoleAssignment{
+			{ID: to.Ptr("/id/1"), Properties: &armauthorization.RoleAssignmentProperties{
+				PrincipalID: to.Ptr(testPrincipalID), RoleDefinitionID: to.Ptr(az.roleDefinitionID(contributorRoleID))}},
+		},
+		deleteByID: func(string) (armauthorization.RoleAssignmentsClientDeleteByIDResponse, error) {
+			return armauthorization.RoleAssignmentsClientDeleteByIDResponse{}, armErr("AuthorizationFailed")
+		},
+	}
+	az.roleAssignments = roles
+
+	err := az.deleteRoleAssignments(context.Background(), testPrincipalID)
+	var forbidden *RoleAssignmentForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("want RoleAssignmentForbiddenError, got %v", err)
+	}
+}
+
+func TestRoleAssignmentUpdateNotPermittedIsForbiddenOnRoleAssignment(t *testing.T) {
+	roles := &fakeRoleAssignments{t: t, create: func(string, string, armauthorization.RoleAssignmentCreateParameters) (armauthorization.RoleAssignmentsClientCreateResponse, error) {
+		return armauthorization.RoleAssignmentsClientCreateResponse{}, armErr("RoleAssignmentUpdateNotPermitted")
+	}}
+	az := newTestAzure(t, nil, nil, nil, roles, nil)
+
+	err := az.ensureRoleAssignments(context.Background(), testPrincipalID)
+	var forbidden *RoleAssignmentForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("want RoleAssignmentForbiddenError, got %v", err)
+	}
 }

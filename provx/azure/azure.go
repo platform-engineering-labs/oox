@@ -286,7 +286,7 @@ func (az *Azure) Delete(ctx context.Context) error {
 func (az *Azure) VerifySubscription(ctx context.Context) (string, error) {
 	resp, err := az.subscriptions.Get(ctx, az.subscriptionID, nil)
 	if err != nil {
-		return "", Classify(err, opSubscription)
+		return "", Classify(err, opMicrosoftResources)
 	}
 
 	actual := deref(resp.TenantID)

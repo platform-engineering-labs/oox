@@ -83,7 +83,14 @@ func (az *Azure) ensureRoleAssignment(ctx context.Context, principalID, roleID s
 
 // deleteRoleAssignments removes every grant this package could have created
 // for the principal, for the roles in roleIDs, at the subscription scope.
-// Grants for other roles, or at other scopes, are left alone.
+// Grants for other roles, other principals, or other scopes, are left alone.
+//
+// The server-side $filter narrows the page ARM returns, but this is the one
+// path in the package that destroys another principal's grants if it gets
+// that wrong, so the principal is also re-checked client-side rather than
+// trusted from the filter alone: a dropped, mistyped, or unhonoured filter
+// must not turn into deleting every Contributor and User Access
+// Administrator assignment in the subscription.
 func (az *Azure) deleteRoleAssignments(ctx context.Context, principalID string) error {
 	pager := az.roleAssignments.NewListForScopePager(az.scope(),
 		&armauthorization.RoleAssignmentsClientListForScopeOptions{
@@ -95,13 +102,18 @@ func (az *Azure) deleteRoleAssignments(ctx context.Context, principalID string) 
 		wantRoles[strings.ToLower(az.roleDefinitionID(roleID))] = struct{}{}
 	}
 
+	op := Operation{Provider: "Microsoft.Authorization", RoleAssignment: true, Scope: az.scope()}
+
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return err
+			return Classify(err, op)
 		}
 		for _, ra := range page.Value {
 			if ra == nil || ra.ID == nil || ra.Properties == nil {
+				continue
+			}
+			if deref(ra.Properties.PrincipalID) != principalID {
 				continue
 			}
 			if _, ours := wantRoles[strings.ToLower(deref(ra.Properties.RoleDefinitionID))]; !ours {
@@ -111,7 +123,7 @@ func (az *Azure) deleteRoleAssignments(ctx context.Context, principalID string) 
 				if armErrorCode(err) == "RoleAssignmentNotFound" || armStatusCode(err) == 404 {
 					continue
 				}
-				return err
+				return Classify(err, op)
 			}
 		}
 	}
