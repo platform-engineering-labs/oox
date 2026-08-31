@@ -38,13 +38,19 @@ func (c Config) Scopes() []string {
 // The token is presented as the client assertion in an ordinary client
 // credentials grant, standing in for the client secret the app registration
 // would otherwise need. The callback is invoked on every refresh.
-func Credential(client oidcx.Client, cfg Config) (*azidentity.ClientAssertionCredential, error) {
+//
+// opts is passed straight through to azidentity.NewClientAssertionCredential.
+// Production callers pass nil; it exists so a test can inject a transport
+// (ClientOptions.Transport) and disable Entra instance discovery
+// (DisableInstanceDiscovery), which together keep a token acquisition
+// entirely offline.
+func Credential(client oidcx.Client, cfg Config, opts *azidentity.ClientAssertionCredentialOptions) (*azidentity.ClientAssertionCredential, error) {
 	return azidentity.NewClientAssertionCredential(
 		cfg.TenantID,
 		cfg.ClientID,
 		func(ctx context.Context) (string, error) {
 			return client.Token(ctx, Audience)
 		},
-		nil,
+		opts,
 	)
 }
