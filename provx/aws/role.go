@@ -28,6 +28,17 @@ const (
 	tagSubject    = "formae-ai:subject"
 )
 
+// The ownership marker every cloud formae reaches into shares. It answers one
+// question only: whether formae created the thing, so discovery can leave it
+// alone. It says nothing about who may delete it, which is what the provenance
+// tags above are for. The key avoids a colon because GCP label keys admit only
+// lowercase letters, digits, underscores and hyphens, and the marker is spelled
+// identically on all three clouds.
+const (
+	tagOwned      = "formae-owned"
+	tagOwnedValue = "true"
+)
+
 type TrustPolicy struct {
 	Version   string            `json:"Version"`
 	Statement []PolicyStatement `json:"Statement"`
@@ -91,6 +102,7 @@ func (a *AWS) ensureRole(ctx context.Context) (string, RoleOutcome, error) {
 		Tags: []types.Tag{
 			{Key: aws.String(tagOwner), Value: aws.String(tagOwnerValue)},
 			{Key: aws.String(tagSubject), Value: aws.String(a.subject)},
+			{Key: aws.String(tagOwned), Value: aws.String(tagOwnedValue)},
 		},
 	})
 	if err == nil {
@@ -115,6 +127,8 @@ func (a *AWS) ensureRole(ctx context.Context) (string, RoleOutcome, error) {
 		return "", "", fmt.Errorf("failed to update the role trust policy: %w", err)
 	}
 
+	a.tagRoleOwned(ctx)
+
 	got, err := a.iam.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(a.roleName)})
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read the converged role: %w", err)
@@ -122,6 +136,30 @@ func (a *AWS) ensureRole(ctx context.Context) (string, RoleOutcome, error) {
 
 	a.logger.Info("converged: connector role")
 	return aws.ToString(got.Role.Arn), RoleConverged, nil
+}
+
+// tagRoleOwned carries the ownership marker to a role that predates it. The
+// create writes it inline; this is what reaches the roles already standing in
+// accounts connected before the marker existed, so re-running connect converges
+// them.
+//
+// A refusal is logged and swallowed, for the same reason the provider's is: the
+// worst case is a role that stays visible to discovery, which is exactly where
+// it is today, and that is not worth failing a connection over. Unlike the
+// provider, this call cannot realistically be refused where the create
+// succeeded, because AWS already requires iam:TagRole to pass Tags to
+// CreateRole.
+func (a *AWS) tagRoleOwned(ctx context.Context) {
+	_, err := a.iam.TagRole(ctx, &iam.TagRoleInput{
+		RoleName: aws.String(a.roleName),
+		Tags: []types.Tag{
+			{Key: aws.String(tagOwned), Value: aws.String(tagOwnedValue)},
+		},
+	})
+	if err != nil {
+		a.logger.Warn("could not tag the connector role as formae-owned; "+
+			"it stays visible to discovery", "error", err)
+	}
 }
 
 // assertRoleOwnership reads the role's tags (paginated) and returns nil

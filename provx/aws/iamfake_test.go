@@ -22,6 +22,8 @@ type fakeIAM struct {
 	getRole                  func(*iam.GetRoleInput) (*iam.GetRoleOutput, error)
 	deleteRole               func(*iam.DeleteRoleInput) (*iam.DeleteRoleOutput, error)
 	listRoleTags             func(*iam.ListRoleTagsInput) (*iam.ListRoleTagsOutput, error)
+	tagRole                  func(*iam.TagRoleInput) (*iam.TagRoleOutput, error)
+	tagOIDCProvider          func(*iam.TagOpenIDConnectProviderInput) (*iam.TagOpenIDConnectProviderOutput, error)
 	updateAssumeRolePolicy   func(*iam.UpdateAssumeRolePolicyInput) (*iam.UpdateAssumeRolePolicyOutput, error)
 	attachRolePolicy         func(*iam.AttachRolePolicyInput) (*iam.AttachRolePolicyOutput, error)
 	detachRolePolicy         func(*iam.DetachRolePolicyInput) (*iam.DetachRolePolicyOutput, error)
@@ -168,4 +170,28 @@ func (f *fakeIAM) DeleteRolePolicy(_ context.Context, in *iam.DeleteRolePolicyIn
 	}
 	f.record("DeleteRolePolicy")
 	return f.deleteRolePolicy(in)
+}
+
+// TagRole and TagOpenIDConnectProvider default to succeeding rather than
+// failing the test, unlike every other method here. They are best-effort
+// markers whose outcome no caller branches on, so demanding that every test
+// touching a create or converge path stub them would add noise to tests about
+// something else entirely. The call is still recorded, so a test that cares can
+// assert on it.
+func (f *fakeIAM) TagRole(_ context.Context, in *iam.TagRoleInput, _ ...func(*iam.Options)) (*iam.TagRoleOutput, error) {
+	f.t.Helper()
+	f.record("TagRole")
+	if f.tagRole == nil {
+		return &iam.TagRoleOutput{}, nil
+	}
+	return f.tagRole(in)
+}
+
+func (f *fakeIAM) TagOpenIDConnectProvider(_ context.Context, in *iam.TagOpenIDConnectProviderInput, _ ...func(*iam.Options)) (*iam.TagOpenIDConnectProviderOutput, error) {
+	f.t.Helper()
+	f.record("TagOpenIDConnectProvider")
+	if f.tagOIDCProvider == nil {
+		return &iam.TagOpenIDConnectProviderOutput{}, nil
+	}
+	return f.tagOIDCProvider(in)
 }
