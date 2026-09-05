@@ -27,7 +27,7 @@ const (
 	// credentialName is the federated identity credential's resource name.
 	credentialName = "formae-ai"
 
-	ownerTagKey   = "formae:owned"
+	ownerTagKey   = "formae-owned"
 	ownerTagValue = "true"
 
 	// Built-in Azure role definition ids. These GUIDs are stable across

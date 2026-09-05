@@ -38,6 +38,7 @@ func (a *AWS) ensureProvider(ctx context.Context) (ProviderOutcome, error) {
 	})
 	if err == nil {
 		a.logger.Info("created: oidc connect provider")
+		a.tagProvider(ctx)
 		return ProviderCreated, nil
 	}
 
@@ -69,8 +70,34 @@ func (a *AWS) ensureProvider(ctx context.Context) (ProviderOutcome, error) {
 		a.logger.Info("converged: oidc connect provider audience")
 	}
 
+	a.tagProvider(ctx)
+
 	a.logger.Info("exists: oidc connect provider")
 	return ProviderExisted, nil
+}
+
+// tagProvider marks the provider as formae's own so discovery leaves it alone.
+//
+// It rides its own request rather than the create's Tags field on purpose: the
+// create has never needed iam:TagOpenIDConnectProvider, and requiring it there
+// would break connect for callers it works for today. For the same reason a
+// refusal is logged and swallowed. An untagged provider is the state every
+// account is already in, so degrading to it costs nothing, while failing the
+// connect over a marker would cost the connection itself.
+//
+// It runs on the converge path too, which is what carries the tag to providers
+// created before this existed.
+func (a *AWS) tagProvider(ctx context.Context) {
+	_, err := a.iam.TagOpenIDConnectProvider(ctx, &iam.TagOpenIDConnectProviderInput{
+		OpenIDConnectProviderArn: aws.String(a.providerArn()),
+		Tags: []types.Tag{
+			{Key: aws.String(tagOwned), Value: aws.String(tagOwnedValue)},
+		},
+	})
+	if err != nil {
+		a.logger.Warn("could not tag the oidc connect provider as formae-owned; "+
+			"it stays visible to discovery", "error", err)
+	}
 }
 
 func (a *AWS) deleteProvider(ctx context.Context) error {
